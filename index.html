@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Шашки онлайн</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="icon" href="favicon.ico">
+    <!-- Предзагрузка изображений -->
+    <link rel="preload" href="images/white-piece.png" as="image">
+    <link rel="preload" href="images/white-king.png" as="image">
+    <link rel="preload" href="images/black-piece.png" as="image">
+    <link rel="preload" href="images/black-king.png" as="image">
+</head>
+<body>
+    <!-- Главное меню -->
+    <div id="menu-screen" class="screen visible">
+        <div class="menu-container">
+            <h1>Шашки онлайн</h1>
+            <button id="play-button" class="menu-button pulse-anim">Играть</button>
+            <button id="settings-button" class="menu-button">Настройки</button>
+            <button id="exit-button" class="menu-button">Выход</button>
+        </div>
+    </div>
+
+    <!-- Экран выбора режима -->
+    <div id="mode-screen" class="screen">
+        <div class="menu-container">
+            <h1>Выберите режим</h1>
+            <button id="vs-computer" class="menu-button slide-in-left">С компьютером</button>
+            <button id="vs-player" class="menu-button slide-in-right">На одном устройстве</button>
+            <button id="back-to-menu" class="menu-button back-button">Назад</button>
+        </div>
+    </div>
+
+    <!-- Игровой экран -->
+    <div id="game-screen" class="screen">
+        <div class="game-container">
+            <h1 class="bounce-anim">Шашки</h1>
+            <div id="status">Ход белых</div>
+            <div id="board-container">
+                <div id="board"></div>
+            </div>
+            <button id="return-button" class="menu-button back-button">В меню</button>
+        </div>
+    </div>
+
+    <!-- Экран настроек -->
+    <div id="settings-screen" class="screen">
+        <div class="menu-container scale-in">
+            <h2>Настройки</h2>
+            <div class="settings-options">
+                <label class="setting fade-in">
+                    <input type="checkbox" id="sound-toggle" checked>
+                    <span>Звуки</span>
+                </label>
+                <label class="setting fade-in" style="animation-delay: 0.1s">
+                    <span>Стиль доски:</span>
+                    <select id="board-style">
+                        <option value="classic">Классический</option>
+                        <option value="wood">Дерево</option>
+                        <option value="modern">Модерн</option>
+                    </select>
+                </label>
+                <label class="setting fade-in" style="animation-delay: 0.2s">
+                    <span>Уровень сложности:</span>
+                    <select id="difficulty">
+                        <option value="easy">Лёгкий</option>
+                        <option value="medium">Средний</option>
+                        <option value="hard">Сложный</option>
+                    </select>
+                </label>
+            </div>
+            <button id="save-settings" class="menu-button pulse-anim">Сохранить</button>
+            <button id="back-button" class="menu-button back-button">Назад</button>
+        </div>
+    </div>
+
+    <audio id="move-sound" src="sounds/move.wav" preload="auto"></audio>
+    <audio id="capture-sound" src="sounds/capture.wav" preload="auto"></audio>
+    <audio id="click-sound" src="sounds/click.wav" preload="auto"></audio>
+    
+    <script src="game.js"></script>
+</body>
+</html>
