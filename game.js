@@ -1,10 +1,18 @@
 // DOM элементы
 const BOARD_SIZE = 8;
 const DIRECTIONS = {
-  king: [{ r: -1, c: -1 }, { r: -1, c: 1 }, { r: 1, c: -1 }, { r: 1, c: 1 }],
-  black: [{ r: 1, c: -1 }, { r: 1, c: 1 }],
-  white: [{ r: -1, c: -1 }, { r: -1, c: 1 }]
+    white: [ { r: -1, c: -1 }, { r: -1, c: 1 } ],
+    black: [ { r: 1, c: -1 }, { r: 1, c: 1 } ],
+    king:  [ 
+        { r: -1, c: -1 }, { r: -1, c: 1 }, 
+        { r: 1, c: -1 },  { r: 1, c: 1 } 
+    ],
+    any: [ // новое направление для обычных шашек в обе стороны
+        { r: -1, c: -1 }, { r: -1, c: 1 },
+        { r: 1, c: -1 },  { r: 1, c: 1 }
+    ]
 };
+
 
 
 const screens = {
@@ -451,17 +459,20 @@ function countMaxCaptures(row, col) {
     }
 }
 
-function hasCaptures(playerColor) {
-    for (let r = 0; r < 8; r++) {
-        for (let c = 0; c < 8; c++) {
-            const piece = gameState.board[r][c];
-            if (piece && piece.type === playerColor && canCapture(r, c)) {
-                return true;
+function hasCaptures(type) {
+    for (let row = 0; row < BOARD_SIZE; row++) {
+        for (let col = 0; col < BOARD_SIZE; col++) {
+            const piece = gameState.board[row][col];
+            if (piece && piece.type === type) {
+                if (canCapture(row, col)) {
+                    return true;
+                }
             }
         }
     }
     return false;
 }
+
 
 // Универсальная анимация движения шашки (обычной или дамки)
 function animateMove(fromRow, fromCol, toRow, toCol, capturedPieces, isKing, callback) {
@@ -966,49 +977,46 @@ function canCapture(row, col) {
 
     console.log(`Проверка взятия для [${row},${col}] (${piece.type} ${piece.king ? 'дамка' : 'шашка'})`);
 
-    if (piece.king) {
-        // Логика для дамки
-        for (const { r: dr, c: dc } of DIRECTIONS.king) {
+    const directions = piece.king ? DIRECTIONS.king : DIRECTIONS.any;
+
+    for (const { r: dr, c: dc } of directions) {
+        if (piece.king) {
             console.log(` Направление: [${dr},${dc}]`);
             let enemyFound = false;
-            
+
             for (let dist = 1; dist < BOARD_SIZE; dist++) {
                 const r = row + dr * dist;
                 const c = col + dc * dist;
-                
+
                 if (!inBounds(r, c)) {
                     console.log(`  [${r},${c}] - за границей`);
                     break;
                 }
 
                 const cellPiece = gameState.board[r][c];
-                console.log(`  Клетка [${r},${c}]: ${cellPiece ? cellPiece.type : 'пусто'}`);
+                console.log(`  Клетка [${r},${c}]: ${cellPiece ? cellPiece.type + (cellPiece.king ? ' дамка' : ' шашка') : 'пусто'}`);
 
-                if (cellPiece) {
-                    if (cellPiece.type === piece.type) {
-                        console.log('    Своя шашка - стоп');
-                        break;
-                    } else if (!enemyFound) {
-                        console.log('    Найден противник');
-                        enemyFound = true;
+                if (!enemyFound) {
+                    if (cellPiece) {
+                        if (cellPiece.type === piece.type) {
+                            console.log('    Своя шашка - стоп');
+                            break;
+                        } else {
+                            console.log('    Найден противник');
+                            enemyFound = true;
+                        }
+                    }
+                } else {
+                    if (!cellPiece) {
+                        console.log('    Пусто после врага - можно рубить');
+                        return true;
                     } else {
-                        console.log('    Уже был противник - стоп');
+                        console.log('    Клетка занята после врага - нельзя рубить');
                         break;
                     }
-                } else if (enemyFound) {
-                    console.log('    Пусто после врага - можно рубить');
-                    return true;
                 }
             }
-        }
-        return false;
-    } else {
-        // Логика для обычной шашки
-        const directions = piece.type === 'black' 
-            ? [{ r: 1, c: -1 }, { r: 1, c: 1 }]
-            : [{ r: -1, c: -1 }, { r: -1, c: 1 }];
-
-        for (const { r: dr, c: dc } of directions) {
+        } else {
             const enemyR = row + dr;
             const enemyC = col + dc;
             const landR = row + 2 * dr;
@@ -1024,9 +1032,12 @@ function canCapture(row, col) {
                 }
             }
         }
-        return false;
     }
+
+    console.log('Возможных взятий не найдено');
+    return false;
 }
+
 
 
 
@@ -1070,10 +1081,10 @@ function findMovesAndCaptures(row, col) {
   const captures = [];
   if (!piece) return { moves, captures };
 
-  const dirs = piece.king ? DIRECTIONS.king : DIRECTIONS[piece.type];
+  const dirs = piece.king ? DIRECTIONS.king : DIRECTIONS.any;
 
-  if (piece.king) {
-    for (const { r: dr, c: dc } of dirs) {
+  for (const { r: dr, c: dc } of dirs) {
+    if (piece.king) {
       let enemyFound = false;
       for (let dist = 1; dist < BOARD_SIZE; dist++) {
         const rCheck = row + dr * dist;
@@ -1094,17 +1105,20 @@ function findMovesAndCaptures(row, col) {
         } else {
           if (!cellPiece) {
             captures.push({ fromRow: row, fromCol: col, toRow: rCheck, toCol: cCheck });
-          } else break;
+          } else {
+            break;
+          }
         }
       }
-    }
-  } else {
-    for (const { r: dr, c: dc } of dirs) {
+    } else {
       const newRow = row + dr;
       const newCol = col + dc;
 
       if (inBounds(newRow, newCol) && !gameState.board[newRow][newCol]) {
-        moves.push({ fromRow: row, fromCol: col, toRow: newRow, toCol: newCol });
+        // Добавляем обычный ход только если нет обязательных взятий
+        if (!hasCaptures(piece.type)) {
+          moves.push({ fromRow: row, fromCol: col, toRow: newRow, toCol: newCol });
+        }
       }
 
       // Проверка взятия
@@ -1124,8 +1138,10 @@ function findMovesAndCaptures(row, col) {
       }
     }
   }
+
   return { moves, captures };
 }
+
 
 // --- Обработка клика игрока ---
 function handleCellClick(row, col) {
