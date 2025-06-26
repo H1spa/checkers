@@ -1245,75 +1245,114 @@ function clearSelection() {
 
 // --- Ход компьютера ---
 async function computerMove() {
-  if (gameState.moveInProgress) return;
+    if (gameState.moveInProgress) return;
 
-  // Если в процессе цепочки взятий — продолжить рубить
-  if (gameState.captureChain) {
-    await computerContinueCapture();
-    return;
-  }
-
-  const allMoves = [];
-  const allCaptures = [];
-
-  for (let r = 0; r < BOARD_SIZE; r++) {
-    for (let c = 0; c < BOARD_SIZE; c++) {
-      const p = gameState.board[r][c];
-      if (p && p.type === 'black') {
-        const { moves, captures } = findMovesAndCaptures(r, c);
-        allMoves.push(...moves);
-        allCaptures.push(...captures);
-      }
-    }
-  }
-
-  let moveToMake = null;
-
-  if (allCaptures.length) {
-    // Берём ход с захватом
-    moveToMake = allCaptures[0];
-  } else if (allMoves.length) {
-    if (gameState.difficulty === 'easy') {
-      moveToMake = allMoves[Math.floor(Math.random() * allMoves.length)];
-    } else {
-      // Предпочитаем ходы к центру доски
-      const centerMoves = allMoves.filter(m => {
-        const distBefore = Math.abs(m.fromRow - 3.5) + Math.abs(m.fromCol - 3.5);
-        const distAfter = Math.abs(m.toRow - 3.5) + Math.abs(m.toCol - 3.5);
-        return distAfter < distBefore;
-      });
-      moveToMake = centerMoves.length
-        ? centerMoves[Math.floor(Math.random() * centerMoves.length)]
-        : allMoves[Math.floor(Math.random() * allMoves.length)];
-    }
-  }
-
-  if (moveToMake) {
-    // Сделать ход и дождаться завершения (анимации, обработки)
-    await new Promise(resolve => {
-      function onMoveComplete() {
-        document.removeEventListener('moveComplete', onMoveComplete);
-        resolve();
-      }
-      document.addEventListener('moveComplete', onMoveComplete);
-      makeMove(moveToMake.fromRow, moveToMake.fromCol, moveToMake.toRow, moveToMake.toCol);
-    });
-
-    // После хода проверить, есть ли продолжение цепочки взятий
     if (gameState.captureChain) {
-      // Если есть, продолжить рубить
-      await computerMove();
-    } else {
-      // Ход окончен, переключаем ход на белых
-      gameState.currentPlayer = 'white';
-      updateStatus();
-      gameState.moveInProgress = false;
+        await computerContinueCapture();
+        return;
     }
-  } else {
-    alert('Победили белые! Компьютер не может ходить.');
-    showScreen('menu');
-  }
+
+    const allMoves = [];
+    const allCaptures = [];
+
+    for (let r = 0; r < BOARD_SIZE; r++) {
+        for (let c = 0; c < BOARD_SIZE; c++) {
+            const p = gameState.board[r][c];
+            if (p && p.type === 'black') {
+                const { moves, captures } = findMovesAndCaptures(r, c);
+                for (const m of moves) {
+                    m.fromRow = r;
+                    m.fromCol = c;
+                    allMoves.push(m);
+                }
+                for (const cpt of captures) {
+                    cpt.fromRow = r;
+                    cpt.fromCol = c;
+                    allCaptures.push(cpt);
+                }
+            }
+        }
+    }
+
+    let moveToMake = null;
+
+    // --- Улучшенный выбор хода с захватом ---
+    if (allCaptures.length) {
+        // Сортируем захваты по приоритету: убиваем дамку, превращаемся в дамку, даём продолжение
+        allCaptures.sort((a, b) => {
+            const scoreA = evaluateCapture(a);
+            const scoreB = evaluateCapture(b);
+            return scoreB - scoreA;
+        });
+        moveToMake = allCaptures[0];
+    }
+    // --- Улучшенный выбор обычного хода ---
+    else if (allMoves.length) {
+        // Предпочитаем ходы к центру или на последнюю линию
+        allMoves.sort((a, b) => {
+            const scoreA = evaluateMove(a);
+            const scoreB = evaluateMove(b);
+            return scoreB - scoreA;
+        });
+        moveToMake = allMoves[0];
+    }
+
+    if (moveToMake) {
+        await new Promise(resolve => {
+            function onMoveComplete() {
+                document.removeEventListener('moveComplete', onMoveComplete);
+                resolve();
+            }
+            document.addEventListener('moveComplete', onMoveComplete);
+            makeMove(moveToMake.fromRow, moveToMake.fromCol, moveToMake.toRow, moveToMake.toCol);
+        });
+
+        if (gameState.captureChain) {
+            await computerMove(); // продолжить цепочку
+        } else {
+            gameState.currentPlayer = 'white';
+            updateStatus();
+            gameState.moveInProgress = false;
+        }
+    } else {
+        alert('Победили белые! Компьютер не может ходить.');
+        showScreen('menu');
+    }
 }
+
+
+function evaluateCapture(move) {
+    const { toRow, toCol, fromRow, fromCol } = move;
+    const enemyPiece = gameState.lastMove?.capturedPieces?.[0];
+    let score = 0;
+
+    // Бонус за превращение в дамку
+    if (toRow === 7) score += 5;
+
+    // Бонус за продолжение захвата
+    const piece = gameState.board[fromRow][fromCol];
+    if (piece?.king ? canKingContinueCapture(toRow, toCol) : canContinueCapture(toRow, toCol)) {
+        score += 3;
+    }
+
+    // Бонус если убиваем дамку
+    if (enemyPiece?.king) score += 4;
+
+    return score;
+}
+
+function evaluateMove(move) {
+    const center = 3.5;
+    const distanceBefore = Math.abs(move.fromRow - center) + Math.abs(move.fromCol - center);
+    const distanceAfter = Math.abs(move.toRow - center) + Math.abs(move.toCol - center);
+    let score = distanceBefore - distanceAfter;
+
+    // Бонус за продвижение к дамке
+    if (move.toRow === 7) score += 2;
+
+    return score;
+}
+
 
 
 // --- Продолжение цепочки рубки компьютера ---
