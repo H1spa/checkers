@@ -49,7 +49,16 @@ let gameState = {
     againstComputer: false,
     difficulty: 'medium',
     moveInProgress: false,
-    captureChain: null // Для цепочек рубок у бота
+    captureChain: null, // Для цепочек рубок у бота
+        scores: {
+        white: 0,
+        black: 0
+    },
+    timer: {
+        minutes: 0,
+        seconds: 0,
+        interval: null
+    }
 };
 
 // Инициализация игры
@@ -58,6 +67,53 @@ function init() {
     loadSettings();
     showScreen('menu');
     playSound('click');
+}
+
+function startTimer() {
+    stopTimer(); // Остановить предыдущий таймер, если был
+    
+    gameState.timer.minutes = 0;
+    gameState.timer.seconds = 0;
+    updateTimerDisplay();
+    
+    gameState.timer.interval = setInterval(() => {
+        gameState.timer.seconds++;
+        if (gameState.timer.seconds >= 60) {
+            gameState.timer.seconds = 0;
+            gameState.timer.minutes++;
+        }
+        updateTimerDisplay();
+    }, 1000);
+}
+
+function stopTimer() {
+    if (gameState.timer.interval) {
+        clearInterval(gameState.timer.interval);
+        gameState.timer.interval = null;
+    }
+}
+
+function updateTimerDisplay() {
+    const min = String(gameState.timer.minutes).padStart(2, '0');
+    const sec = String(gameState.timer.seconds).padStart(2, '0');
+    document.getElementById('timer-min').textContent = min;
+    document.getElementById('timer-sec').textContent = sec;
+}
+
+// Функции для работы с очками
+function updateScores() {
+    document.getElementById('white-score').textContent = gameState.scores.white;
+    document.getElementById('black-score').textContent = gameState.scores.black;
+}
+
+
+function addScore(player, points) {
+    if (player === 'white') {
+        gameState.scores.white += points;
+    } else {
+        gameState.scores.black += points;
+    }
+    updateScores();
 }
 
 // Показ экрана
@@ -130,8 +186,22 @@ function startGame(againstComputer) {
         againstComputer,
         difficulty: settings.difficulty,
         moveInProgress: false,
-        captureChain: null
+        captureChain: null,
+        scores: {
+            white: 0,
+            black: 0
+        },
+        timer: {
+            minutes: 0,
+            seconds: 0,
+            interval: null
+        },
+        lastMove: null
     };
+    
+    // Сброс и запуск таймера
+    startTimer();
+    updateScores();
     
     renderBoard();
     showScreen('game');
@@ -232,83 +302,90 @@ function highlightCell(row, col, highlight) {
 function isValidMove(fromRow, fromCol, toRow, toCol) {
     const piece = gameState.board[fromRow][fromCol];
     if (!piece) return false;
+    
+    // Целевая клетка должна быть пустой
+    if (gameState.board[toRow][toCol]) return false;
 
     const rowDiff = toRow - fromRow;
     const colDiff = toCol - fromCol;
 
-    // Ход должен быть по диагонали
+    // Движение только по диагонали
     if (Math.abs(rowDiff) !== Math.abs(colDiff)) return false;
 
-    // Конечная клетка должна быть пустой
-    if (gameState.board[toRow][toCol]) return false;
-
-    // === ДАМКА ===
     if (piece.king) {
         const dirR = Math.sign(rowDiff);
         const dirC = Math.sign(colDiff);
         let enemyFound = null;
-        let lastEnemyPos = null;
+        let enemyPos = null;
 
+        // Проверяем все клетки по пути
         for (let dist = 1; dist < Math.abs(rowDiff); dist++) {
             const r = fromRow + dist * dirR;
             const c = fromCol + dist * dirC;
-
+            
             if (!inBounds(r, c)) return false;
-
-            const cellPiece = gameState.board[r][c];
-            if (cellPiece) {
-                if (cellPiece.type === piece.type) return false; // нельзя через своих
-
-                if (enemyFound) return false; // уже есть враг — второго быть не должно
-
-                enemyFound = cellPiece;
-                lastEnemyPos = { row: r, col: c };
+            
+            const p = gameState.board[r][c];
+            if (p) {
+                if (p.type === piece.type) return false; // Нельзя прыгать через своих
+                if (enemyFound) return false; // Уже нашли врага - второго быть не должно
+                enemyFound = p;
+                enemyPos = { row: r, col: c };
             }
         }
 
+        // Если есть взятие
         if (enemyFound) {
-            // Проверим, что to находится после врага в том же направлении
-            const afterEnemyR = lastEnemyPos.row + dirR;
-            const afterEnemyC = lastEnemyPos.col + dirC;
-
-            if (!inBounds(afterEnemyR, afterEnemyC)) return false;
-            if (Math.sign(toRow - lastEnemyPos.row) !== dirR ||
-                Math.sign(toCol - lastEnemyPos.col) !== dirC) return false;
-
+            // Проверяем, что после врага есть пустые клетки до конечной позиции
+            // Дамка должна остановиться сразу за сбитой шашкой
+            const enemyDist = Math.max(Math.abs(enemyPos.row - fromRow), Math.abs(enemyPos.col - fromCol));
+            const requiredDist = enemyDist + 1;
+            
+            if (Math.abs(rowDiff) !== requiredDist || Math.abs(colDiff) !== requiredDist) {
+                return false;
+            }
+            
+            // Проверяем, нет ли обязательных взятий с большим количеством шашек
+            if (hasCaptures(piece.type)) {
+                const maxCaptures = countMaxCaptures(fromRow, fromCol);
+                if (maxCaptures > 1) return false;
+            }
+            
             return true;
         }
-
-        // Без рубки дамка может двигаться только если нет других возможных взятий
+        
+        // Если нет взятий, разрешаем ход только если нет обязательных взятий
         return !hasCaptures(piece.type);
-    }
+    } else {
+        // Логика для обычной шашки
+        const forwardDir = piece.type === 'white' ? -1 : 1;
 
-    // === ОБЫЧНАЯ ШАШКА ===
+        // Обычный ход без взятия
+        if (Math.abs(rowDiff) === 1 && rowDiff === forwardDir && Math.abs(colDiff) === 1) {
+            return !hasCaptures(piece.type);
+        }
 
-    const direction = piece.type === 'black' ? 1 : -1;
-
-    // Простой ход на 1 клетку по диагонали
-    if (rowDiff === direction && Math.abs(colDiff) === 1) {
-        return !hasCaptures(piece.type); // Только если нет обязательных взятий
-    }
-
-    // Взятие через одну клетку
-    if (rowDiff === 2 * direction && Math.abs(colDiff) === 2) {
-        const midRow = fromRow + direction;
-        const midCol = fromCol + Math.sign(colDiff);
-        const enemyPiece = gameState.board[midRow][midCol];
-
-        if (
-            enemyPiece &&
-            enemyPiece.type !== piece.type &&
-            !gameState.board[toRow][toCol]
-        ) {
+        // Ход со взятием
+        if (Math.abs(rowDiff) === 2 && Math.abs(colDiff) === 2) {
+            const midRow = fromRow + rowDiff / 2;
+            const midCol = fromCol + colDiff / 2;
+            const midPiece = gameState.board[midRow][midCol];
+            
+            // Между начальной и конечной позицией должна быть шашка противника
+            if (!midPiece || midPiece.type === piece.type) return false;
+            
+            // Проверяем, нет ли обязательных взятий с большим количеством шашек
+            if (hasCaptures(piece.type)) {
+                const maxCaptures = countMaxCaptures(fromRow, fromCol);
+                if (maxCaptures > 1) return false;
+            }
+            
             return true;
         }
+
+        return false;
     }
-
-    return false;
 }
-
 
 // Вспомогательная функция для подсчета максимального количества взятий
 function countMaxCaptures(row, col) {
@@ -387,51 +464,159 @@ function hasCaptures(playerColor) {
 }
 
 // Универсальная анимация движения шашки (обычной или дамки)
-function animateMove(fromRow, fromCol, toRow, toCol, capturedPieces = [], isKing = false) {
+function animateMove(fromRow, fromCol, toRow, toCol, capturedPieces, isKing, callback) {
     const cellFrom = document.querySelector(`.cell[data-row="${fromRow}"][data-col="${fromCol}"]`);
     const cellTo = document.querySelector(`.cell[data-row="${toRow}"][data-col="${toCol}"]`);
+    
+    if (!cellFrom || !cellTo) {
+        console.error('Не найдены клетки для анимации');
+        if (callback) callback();
+        return;
+    }
+
+    // Удаляем шашки с доски сразу
     const pieceImg = cellFrom.querySelector('.piece');
-    if (!pieceImg) return;
-
-    const clone = pieceImg.cloneNode(true);
-    clone.classList.add('moving-piece');
-
-    const fromRect = cellFrom.getBoundingClientRect();
-    const toRect = cellTo.getBoundingClientRect();
-
-    clone.style.setProperty('--tx', `${toRect.left - fromRect.left}px`);
-    clone.style.setProperty('--ty', `${toRect.top - fromRect.top}px`);
-    clone.style.left = `${fromRect.left + window.scrollX}px`;
-    clone.style.top = `${fromRect.top + window.scrollY}px`;
-    clone.style.position = 'absolute';
-    clone.style.zIndex = '1000';
-
-    document.body.appendChild(clone);
-    pieceImg.remove();
-
-    // Удаляем сбитые шашки сразу
+    if (pieceImg) {
+        pieceImg.remove();
+    }
+    
+    // Удаляем сбитые шашки
     capturedPieces.forEach(({ row, col }) => {
         const capturedCell = document.querySelector(`.cell[data-row="${row}"][data-col="${col}"]`);
         const capturedPiece = capturedCell?.querySelector('.piece');
         if (capturedPiece) capturedPiece.remove();
     });
 
-    // Звук
-    if (settings.sound) {
-        const audio = new Audio(`sounds/${capturedPieces.length ? 'capture' : 'move'}.wav`);
-        audio.volume = capturedPieces.length ? 1 : 0.5;
-        audio.play();
-    }
-
+    // Создаем новый элемент для анимации
+    const newPiece = document.createElement('img');
+    newPiece.className = 'piece moving-piece';
+    newPiece.src = `images/${gameState.board[toRow][toCol].type}-${isKing ? 'king' : 'piece'}.png`;
+    newPiece.alt = `${gameState.board[toRow][toCol].type} ${isKing ? 'king' : 'piece'}`;
+    
+    // Позиционирование
+    const fromRect = cellFrom.getBoundingClientRect();
+    const toRect = cellTo.getBoundingClientRect();
+    
+    newPiece.style.position = 'absolute';
+    newPiece.style.left = `${fromRect.left}px`;
+    newPiece.style.top = `${fromRect.top}px`;
+    newPiece.style.transition = 'transform 0.3s ease';
+    newPiece.style.zIndex = '1000';
+    
+    document.body.appendChild(newPiece);
+    
+    // Запускаем анимацию
     setTimeout(() => {
-        clone.remove();
-        if (isKing) {
-            processKingMoveCompletion(fromRow, fromCol, toRow, toCol, capturedPieces);
-        } else {
-            processMoveCompletion(fromRow, fromCol, toRow, toCol, capturedPieces);
-        }
+        newPiece.style.transform = `translate(${toRect.left - fromRect.left}px, ${toRect.top - fromRect.top}px)`;
+    }, 10);
+
+    // Завершение анимации
+    setTimeout(() => {
+        newPiece.remove();
+        
+        // Восстанавливаем шашку на новой позиции
+        const finalPiece = document.createElement('img');
+        finalPiece.className = 'piece';
+        finalPiece.src = `images/${gameState.board[toRow][toCol].type}-${isKing ? 'king' : 'piece'}.png`;
+        finalPiece.alt = `${gameState.board[toRow][toCol].type} ${isKing ? 'king' : 'piece'}`;
+        cellTo.appendChild(finalPiece);
+        
+        // Воспроизводим звук
+        playSound(capturedPieces.length ? 'capture' : 'move');
+        
+        if (callback) callback();
     }, 300);
 }
+
+function processMoveCompletion(fromRow, fromCol, toRow, toCol, capturedPieces) {
+    console.log('Обработка завершения хода...');
+    
+    // Проверяем, что шашка на месте
+    const piece = gameState.board[toRow]?.[toCol];
+    if (!piece) {
+        console.error('Шашка не найдена в целевой позиции');
+        completeMove();
+        return;
+    }
+
+    // Удаляем сбитые шашки из состояния игры
+    capturedPieces.forEach(({ row, col }) => {
+        if (gameState.board[row]?.[col]) {
+            gameState.board[row][col] = null;
+        }
+    });
+
+    // Проверяем превращение в дамку
+    if (!piece.king && ((piece.type === 'white' && toRow === 0) || 
+                       (piece.type === 'black' && toRow === 7))) {
+        piece.king = true;
+        console.log(`Шашка превратилась в дамку на [${toRow},${toCol}]`);
+    }
+
+    // Проверяем возможность продолжения взятия
+    if (capturedPieces.length > 0) {
+        const canContinue = piece.king 
+            ? canKingContinueCapture(toRow, toCol)
+            : canContinueCapture(toRow, toCol);
+        
+        console.log(`Можно продолжить рубить: ${canContinue}`);
+        
+        if (canContinue) {
+            gameState.captureChain = { row: toRow, col: toCol };
+            highlightCell(toRow, toCol, true);
+            gameState.moveInProgress = false;
+            
+            // Для компьютера сразу продолжаем цепочку
+            if (gameState.againstComputer && gameState.currentPlayer === 'black') {
+                setTimeout(computerContinueCapture, 800);
+            }
+            return;
+        }
+    }
+    
+    completeMove();
+}
+
+function processKingMoveCompletion(fromRow, fromCol, toRow, toCol, capturedPieces) {
+    const piece = gameState.board[fromRow][fromCol];
+
+    // Удаляем съеденные шашки из состояния игры
+    capturedPieces.forEach(({ row, col }) => {
+        gameState.board[row][col] = null;
+    });
+
+    // Перемещаем дамку
+    gameState.board[fromRow][fromCol] = null;
+    gameState.board[toRow][toCol] = piece;
+
+    // Перерисовываем дамку
+    redrawPiece(toRow, toCol, piece);
+
+    // Проверяем возможность продолжения взятия
+    if (capturedPieces.length > 0 && canKingContinueCapture(toRow, toCol)) {
+        gameState.captureChain = { row: toRow, col: toCol };
+        highlightCell(toRow, toCol, true);
+        gameState.moveInProgress = false;
+        return;
+    }
+
+    completeMove();
+}
+
+function redrawPiece(row, col, piece) {
+    const cell = document.querySelector(`.cell[data-row="${row}"][data-col="${col}"]`);
+    cell.innerHTML = ''; // Очищаем клетку
+    
+    if (piece) {
+        const pieceElement = document.createElement('img');
+        pieceElement.className = 'piece';
+        pieceElement.src = `images/${piece.type}-${piece.king ? 'king' : 'piece'}.png`;
+        pieceElement.alt = `${piece.type} ${piece.king ? 'king' : 'piece'}`;
+        cell.appendChild(pieceElement);
+    }
+}
+
+
 
 const moveAudio = new Audio('sounds/move.wav');
 const captureAudio = new Audio('sounds/capture.wav');
@@ -455,73 +640,170 @@ function playSound(type) {
 
 
 function makeMove(fromRow, fromCol, toRow, toCol) {
-    if (gameState.moveInProgress) return;
+    console.log(`Попытка сделать ход с [${fromRow},${fromCol}] на [${toRow},${toCol}]`);
+    
+    if (gameState.moveInProgress) {
+        console.log('Движение уже в процессе');
+        return;
+    }
     gameState.moveInProgress = true;
 
     const piece = gameState.board[fromRow][fromCol];
     if (!piece) {
+        console.log('На начальной позиции нет шашки');
         gameState.moveInProgress = false;
         return;
     }
 
+    console.log(`Тип шашки: ${piece.type}, ${piece.king ? 'дамка' : 'обычная'}`);
+    
     let capturedPieces = [];
     const isKing = piece.king;
 
+    // Определяем сбитые шашки
     if (isKing) {
+        console.log('Обработка хода дамки');
         const dirR = Math.sign(toRow - fromRow);
         const dirC = Math.sign(toCol - fromCol);
-        
+        let enemyFound = false;
+
         for (let dist = 1; dist < Math.abs(toRow - fromRow); dist++) {
             const r = fromRow + dist * dirR;
             const c = fromCol + dist * dirC;
             if (!inBounds(r, c)) break;
-            
+
             const p = gameState.board[r][c];
-            if (p && p.type !== piece.type) {
+            if (p && p.type !== piece.type && !enemyFound) {
+                console.log(`Найдена шашка противника на [${r},${c}]`);
                 capturedPieces.push({ row: r, col: c });
+                enemyFound = true;
             }
         }
     } else {
-        // Обычная шашка
+        // Для обычной шашки
         if (Math.abs(toRow - fromRow) === 2) {
-            capturedPieces.push({
-                row: (fromRow + toRow) >> 1,
-                col: (fromCol + toCol) >> 1
-            });
+            const midRow = (fromRow + toRow) >> 1;
+            const midCol = (fromCol + toCol) >> 1;
+            const midPiece = gameState.board[midRow][midCol];
+            
+            if (midPiece && midPiece.type !== piece.type) {
+                console.log(`Найдена шашка противника на [${midRow},${midCol}]`);
+                capturedPieces.push({ row: midRow, col: midCol });
+            }
         }
     }
 
-    animateMove(fromRow, fromCol, toRow, toCol, capturedPieces, isKing);
+    // Создаем копию шашки для анимации
+    const pieceCopy = {...piece};
+    
+    // Немедленно обновляем состояние доски
+    gameState.board[fromRow][fromCol] = null;
+    gameState.board[toRow][toCol] = pieceCopy;
+    
+    // Удаляем сбитые шашки
+    capturedPieces.forEach(({row, col}) => {
+        gameState.board[row][col] = null;
+    });
+
+    // Проверяем превращение в дамку
+    if (!pieceCopy.king && ((pieceCopy.type === 'white' && toRow === 0) || 
+                           (pieceCopy.type === 'black' && toRow === 7))) {
+        pieceCopy.king = true;
+        console.log(`Шашка превратилась в дамку на [${toRow},${toCol}]`);
+    }
+
+    // Сохраняем информацию о ходе
+    gameState.lastMove = {
+        fromRow, fromCol,
+        toRow, toCol,
+        capturedPieces,
+        pieceType: pieceCopy.type,
+        wasKing: piece.king // Сохраняем исходное состояние (до превращения)
+    };
+
+    console.log(`Количество сбитых шашек: ${capturedPieces.length}`);
+    
+    // Запускаем анимацию с обновленным состоянием
+    animateMove(fromRow, fromCol, toRow, toCol, capturedPieces, pieceCopy.king, () => {
+        console.log('Анимация завершена, проверяем продолжение взятия...');
+        
+        // Проверяем возможность продолжения взятия
+        if (capturedPieces.length > 0) {
+            const canContinue = pieceCopy.king 
+                ? canKingContinueCapture(toRow, toCol)
+                : canContinueCapture(toRow, toCol);
+            
+            console.log(`Можно продолжить рубить: ${canContinue}`);
+            
+            if (canContinue) {
+                gameState.captureChain = { row: toRow, col: toCol };
+                highlightCell(toRow, toCol, true);
+                
+                // Если это компьютер, сразу продолжаем цепочку
+                if (gameState.againstComputer && gameState.currentPlayer === 'black') {
+                    setTimeout(computerContinueCapture, 800);
+                }
+                
+                gameState.moveInProgress = false;
+                return;
+            }
+        }
+        
+        // Если продолжения нет, завершаем ход
+        completeMove();
+    });
 }
+
 
 
 
 // Обработка завершения обычного хода
 function processMoveCompletion(fromRow, fromCol, toRow, toCol, capturedPieces) {
-    const piece = gameState.board[fromRow][fromCol];
-
-    // Удаляем сбитые шашки
-    capturedPieces.forEach(({ row, col }) => {
-        gameState.board[row][col] = null;
-    });
-
-    gameState.board[fromRow][fromCol] = null;
-    gameState.board[toRow][toCol] = piece;
-
-    // Превращение в дамку
-    if ((piece.type === 'white' && toRow === 0) || (piece.type === 'black' && toRow === 7)) {
-        piece.king = true;
-    }
-
-    redrawPiece(toRow, toCol, piece);
-
-    if (capturedPieces.length && canCapture(toRow, toCol)) {
-        gameState.captureChain = { row: toRow, col: toCol };
-        highlightCell(toRow, toCol, true);
-        gameState.moveInProgress = false;
+    console.log('Обработка завершения хода...');
+    
+    // Проверяем, что шашка на месте
+    const piece = gameState.board[toRow]?.[toCol];
+    if (!piece) {
+        console.error('Шашка не найдена в целевой позиции');
+        completeMove();
         return;
     }
 
+    // Удаляем сбитые шашки из состояния игры
+    capturedPieces.forEach(({ row, col }) => {
+        if (gameState.board[row]?.[col]) {
+            gameState.board[row][col] = null;
+        }
+    });
+
+    // Проверяем превращение в дамку
+    if (!piece.king && ((piece.type === 'white' && toRow === 0) || 
+                       (piece.type === 'black' && toRow === 7))) {
+        piece.king = true;
+        console.log(`Шашка превратилась в дамку на [${toRow},${toCol}]`);
+    }
+
+    // Проверяем возможность продолжения взятия
+    if (capturedPieces.length > 0) {
+        const canContinue = piece.king 
+            ? canKingContinueCapture(toRow, toCol)
+            : canContinueCapture(toRow, toCol);
+        
+        console.log(`Можно продолжить рубить: ${canContinue}`);
+        
+        if (canContinue) {
+            gameState.captureChain = { row: toRow, col: toCol };
+            highlightCell(toRow, toCol, true);
+            gameState.moveInProgress = false;
+            
+            // Для компьютера сразу продолжаем цепочку
+            if (gameState.againstComputer && gameState.currentPlayer === 'black') {
+                setTimeout(computerContinueCapture, 800);
+            }
+            return;
+        }
+    }
+    
     completeMove();
 }
 
@@ -562,22 +844,35 @@ function redrawPiece(row, col, piece) {
 }
 
 function completeMove() {
-    gameState.captureChain = null;
+    console.log('Завершение хода...');
     
-    // Проверка окончания игры
+    // Добавляем очки за взятие (если были)
+    if (gameState.lastMove?.capturedPieces?.length) {
+        addScore(gameState.currentPlayer, gameState.lastMove.capturedPieces.length);
+    }
+    
+    // Проверяем, окончена ли игра
     if (isGameOver()) {
+        console.log('Игра окончена');
         showGameOver();
         return;
     }
-    
-    gameState.currentPlayer = gameState.currentPlayer === 'white' ? 'black' : 'white';
+
+    // Сбрасываем цепочку взятий и переключаем игрока
+    gameState.captureChain = null;
+    gameState.currentPlayer = (gameState.currentPlayer === 'white') ? 'black' : 'white';
     updateStatus();
     gameState.moveInProgress = false;
 
+    // Если игра с компьютером и сейчас его ход
     if (gameState.againstComputer && gameState.currentPlayer === 'black') {
-        setTimeout(computerMove, 100);
+        setTimeout(computerMove, 800);
     }
 }
+
+
+
+
 
 function isGameOver() {
     // Проверяем есть ли у текущего игрока доступные ходы
@@ -593,41 +888,74 @@ function isGameOver() {
     return true;
 }
 
+// Показать экран завершения игры
 function showGameOver() {
+    stopTimer();
+    
     const winner = gameState.currentPlayer === 'white' ? 'Чёрные' : 'Белые';
-    alert(`Игра окончена! Победили ${winner}!`);
+    const winnerScore = gameState.currentPlayer === 'white' ? gameState.scores.black : gameState.scores.white;
+    const timePlayed = `${String(gameState.timer.minutes).padStart(2, '0')}:${String(gameState.timer.seconds).padStart(2, '0')}`;
+    
+    const message = `Игра окончена!\nПобедили ${winner}!\n\nСчёт: ${winnerScore}\nВремя игры: ${timePlayed}`;
+    
+    alert(message);
     showScreen('menu');
 }
 
+
+// Проверка возможности продолжения взятия дамкой
 // Проверка возможности продолжения взятия дамкой
 function canKingContinueCapture(row, col) {
     const piece = gameState.board[row][col];
-    if (!piece || !piece.king) return false;
+    if (!piece || !piece.king) {
+        console.log(`На позиции [${row},${col}] нет дамки`);
+        return false;
+    }
 
+    console.log(`--- Проверка продолжения взятия для дамки [${row},${col}] ---`);
+    
     for (const { r: dr, c: dc } of DIRECTIONS.king) {
-        let enemyFound = false;
+        console.log(`Проверяем направление: [${dr},${dc}]`);
+        
+        let enemyFound = null;
+        let enemyPos = null;
+        
         for (let dist = 1; dist < BOARD_SIZE; dist++) {
             const r = row + dr * dist;
             const c = col + dc * dist;
-            if (!inBounds(r, c)) break;
+            
+            if (!inBounds(r, c)) {
+                console.log(`  [${r},${c}] - за пределами доски`);
+                break;
+            }
 
             const cellPiece = gameState.board[r][c];
-            if (cellPiece) {
-                if (cellPiece.type === piece.type) break;
-                if (!enemyFound && cellPiece.type !== piece.type) {
-                    enemyFound = true;
-                    // Проверяем есть ли пустая клетка за врагом
-                    for (let d2 = dist + 1; d2 < BOARD_SIZE; d2++) {
-                        const r2 = row + dr * d2;
-                        const c2 = col + dc * d2;
-                        if (!inBounds(r2, c2)) break;
-                        if (!gameState.board[r2][c2]) return true;
-                        if (gameState.board[r2][c2]) break;
+            console.log(`  Клетка [${r},${c}]: ${cellPiece ? cellPiece.type + (cellPiece.king ? ' дамка' : ' шашка') : 'пусто'}`);
+            
+            if (!enemyFound) {
+                if (cellPiece) {
+                    if (cellPiece.type === piece.type) {
+                        console.log('    Своя шашка - прерываем направление');
+                        break;
+                    } else {
+                        console.log('    Найден противник');
+                        enemyFound = cellPiece;
+                        enemyPos = { r, c };
                     }
+                }
+            } else {
+                if (!cellPiece) {
+                    console.log(`    Пустая клетка после врага - можно рубить до [${r},${c}]`);
+                    return true;
+                } else {
+                    console.log('    Клетка занята после врага - нельзя рубить');
+                    break;
                 }
             }
         }
     }
+    
+    console.log('--- Продолжение взятия не найдено ---');
     return false;
 }
 
@@ -636,57 +964,63 @@ function canCapture(row, col) {
     const piece = gameState.board[row][col];
     if (!piece) return false;
 
+    console.log(`Проверка взятия для [${row},${col}] (${piece.type} ${piece.king ? 'дамка' : 'шашка'})`);
+
     if (piece.king) {
         // Логика для дамки
         for (const { r: dr, c: dc } of DIRECTIONS.king) {
+            console.log(` Направление: [${dr},${dc}]`);
             let enemyFound = false;
+            
             for (let dist = 1; dist < BOARD_SIZE; dist++) {
                 const r = row + dr * dist;
                 const c = col + dc * dist;
-                if (!inBounds(r, c)) break;
+                
+                if (!inBounds(r, c)) {
+                    console.log(`  [${r},${c}] - за границей`);
+                    break;
+                }
 
                 const cellPiece = gameState.board[r][c];
+                console.log(`  Клетка [${r},${c}]: ${cellPiece ? cellPiece.type : 'пусто'}`);
 
                 if (cellPiece) {
-                    if (cellPiece.type === piece.type) break; // Своя шашка — дальше нельзя
-
-                    if (cellPiece.type !== piece.type && !enemyFound) {
+                    if (cellPiece.type === piece.type) {
+                        console.log('    Своя шашка - стоп');
+                        break;
+                    } else if (!enemyFound) {
+                        console.log('    Найден противник');
                         enemyFound = true;
-                        continue; // Проверим, есть ли пустая клетка дальше
                     } else {
-                        break; // Уже нашли врага и теперь вторая фигура — нельзя
+                        console.log('    Уже был противник - стоп');
+                        break;
                     }
-                } else {
-                    if (enemyFound) {
-                        return true; // Пустая клетка за врагом — можно рубить
-                    }
-                    // Просто пустая клетка, идём дальше
+                } else if (enemyFound) {
+                    console.log('    Пусто после врага - можно рубить');
+                    return true;
                 }
             }
         }
         return false;
     } else {
         // Логика для обычной шашки
-        const directions = piece.type === 'black'
+        const directions = piece.type === 'black' 
             ? [{ r: 1, c: -1 }, { r: 1, c: 1 }]
             : [{ r: -1, c: -1 }, { r: -1, c: 1 }];
 
         for (const { r: dr, c: dc } of directions) {
             const enemyR = row + dr;
             const enemyC = col + dc;
-            const landingR = row + 2 * dr;
-            const landingC = col + 2 * dc;
+            const landR = row + 2 * dr;
+            const landC = col + 2 * dc;
 
-            if (inBounds(enemyR, enemyC) && inBounds(landingR, landingC)) {
+            if (inBounds(enemyR, enemyC) && inBounds(landR, landC)) {
                 const enemyPiece = gameState.board[enemyR][enemyC];
-                const landingCell = gameState.board[landingR][landingC];
+                const landingCell = gameState.board[landR][landC];
 
-                if (
-                    enemyPiece &&
-                    enemyPiece.type !== piece.type &&
-                    !landingCell
-                ) {
-                    return true; // Возможность захвата
+                if (enemyPiece && enemyPiece.type !== piece.type && !landingCell) {
+                    console.log(`Можно рубить через [${enemyR},${enemyC}] на [${landR},${landC}]`);
+                    return true;
                 }
             }
         }
@@ -704,38 +1038,29 @@ function inBounds(r, c) {
 
 
 // Проверка взятий дамкой
-function canKingContinueCapture(row, col) {
-    const piece = gameState.board[row][col];
-    if (!piece || !piece.king) return false;
+function canKingCapture(row, col) {
+  const piece = gameState.board[row][col];
+  if (!piece || !piece.king) return false;
 
-    for (const { r: dr, c: dc } of DIRECTIONS.king) {
-        let enemyFound = false;
+  for (const { r: dr, c: dc } of DIRECTIONS.king) {
+    let enemyFound = false;
+    for (let dist = 1; dist < BOARD_SIZE; dist++) {
+      const rCheck = row + dr * dist;
+      const cCheck = col + dc * dist;
+      if (!inBounds(rCheck, cCheck)) break;
 
-        for (let dist = 1; dist < BOARD_SIZE; dist++) {
-            const r = row + dr * dist;
-            const c = col + dc * dist;
-            if (!inBounds(r, c)) break;
-
-            const cellPiece = gameState.board[r][c];
-
-            if (cellPiece) {
-                if (cellPiece.type === piece.type) break; // своя — стоп
-                if (!enemyFound) {
-                    enemyFound = true; // нашли врага — продолжаем смотреть дальше
-                } else {
-                    break; // уже нашли врага, а это вторая фигура — нельзя
-                }
-            } else {
-                if (enemyFound) {
-                    return true; // пустая клетка за врагом — можно рубить
-                }
-                // иначе просто пустая клетка — идём дальше
-            }
-        }
+      const cellPiece = gameState.board[rCheck][cCheck];
+      if (!enemyFound) {
+        if (cellPiece && cellPiece.type === piece.type) break;
+        if (cellPiece && cellPiece.type !== piece.type) enemyFound = true;
+      } else {
+        if (!cellPiece) return true; // есть возможность взятия после врага
+        else break;
+      }
     }
-    return false;
+  }
+  return false;
 }
-
 
 
 // --- Поиск ходов и взятий для шашки (используется ИИ) ---
@@ -807,30 +1132,63 @@ function handleCellClick(row, col) {
   if (gameState.moveInProgress) return;
   if (gameState.againstComputer && gameState.currentPlayer !== 'white') return;
 
-  // Если в цепочке рубок, разрешаем ходить только шашкой в цепочке
+  // --- Цепочка рубок ---
   if (gameState.captureChain) {
     const { row: cr, col: cc } = gameState.captureChain;
-    if (row === cr && col === cc) return; // клик по текущей шашке — игнорируем
+
+    if (row === cr && col === cc) return;
 
     const clickedPiece = gameState.board[row][col];
-    // 🔒 Ограничение: нельзя кликать по шашкам соперника
     if (clickedPiece && clickedPiece.type !== gameState.currentPlayer) return;
+
+    const piece = gameState.board[cr][cc];
+    if (!piece) return;
 
     const rowDiff = row - cr;
     const colDiff = col - cc;
 
-    if (Math.abs(rowDiff) === 2 && Math.abs(colDiff) === 2) {
-      const midRow = cr + rowDiff / 2;
-      const midCol = cc + colDiff / 2;
-      const midPiece = gameState.board[midRow][midCol];
+    if (piece.king) {
+      // --- Цепочка взятий дамкой ---
+      const dirR = Math.sign(rowDiff);
+      const dirC = Math.sign(colDiff);
+      let r = cr + dirR;
+      let c = cc + dirC;
+      let enemy = null;
 
-      if (midPiece && midPiece.type !== gameState.currentPlayer) {
+      while (inBounds(r, c) && (r !== row || c !== col)) {
+        const p = gameState.board[r][c];
+        if (p) {
+          if (p.type === piece.type) break;
+          if (!enemy) {
+            enemy = { row: r, col: c };
+          } else {
+            enemy = null;
+            break;
+          }
+        }
+        r += dirR;
+        c += dirC;
+      }
+
+      if (enemy && !gameState.board[row][col]) {
         makeMove(cr, cc, row, col);
+      }
+    } else {
+      // --- Цепочка взятий обычной шашкой ---
+      if (Math.abs(rowDiff) === 2 && Math.abs(colDiff) === 2) {
+        const midRow = cr + rowDiff / 2;
+        const midCol = cc + colDiff / 2;
+        const midPiece = gameState.board[midRow][midCol];
+
+        if (midPiece && midPiece.type !== piece.type && !gameState.board[row][col]) {
+          makeMove(cr, cc, row, col);
+        }
       }
     }
     return;
   }
 
+  // --- Выбор шашки ---
   const piece = gameState.board[row][col];
   if (piece && piece.type === gameState.currentPlayer) {
     if (hasCaptures(gameState.currentPlayer) && !canCapture(row, col)) return;
@@ -838,13 +1196,23 @@ function handleCellClick(row, col) {
     clearSelection();
     highlightCell(row, col, true);
     gameState.selectedPiece = { row, col };
-  } else if (!piece && gameState.selectedPiece) {
+  }
+
+  // --- Попытка хода по пустой клетке ---
+  else if (!piece && gameState.selectedPiece) {
     const { row: fromRow, col: fromCol } = gameState.selectedPiece;
 
     if (hasCaptures(gameState.currentPlayer)) {
       const rowDiff = row - fromRow;
       const colDiff = col - fromCol;
-      if (Math.abs(rowDiff) !== 2 || Math.abs(colDiff) !== 2) return;
+
+      const selectedPiece = gameState.board[fromRow][fromCol];
+      if (!selectedPiece) return;
+
+      if (!selectedPiece.king) {
+        // обычная шашка должна прыгать через 2 клетки
+        if (Math.abs(rowDiff) !== 2 || Math.abs(colDiff) !== 2) return;
+      }
     }
 
     if (isValidMove(fromRow, fromCol, row, col)) {
@@ -860,11 +1228,12 @@ function clearSelection() {
 }
 
 // --- Ход компьютера ---
-function computerMove() {
+async function computerMove() {
   if (gameState.moveInProgress) return;
 
+  // Если в процессе цепочки взятий — продолжить рубить
   if (gameState.captureChain) {
-    computerContinueCapture();
+    await computerContinueCapture();
     return;
   }
 
@@ -885,6 +1254,7 @@ function computerMove() {
   let moveToMake = null;
 
   if (allCaptures.length) {
+    // Берём ход с захватом
     moveToMake = allCaptures[0];
   } else if (allMoves.length) {
     if (gameState.difficulty === 'easy') {
@@ -896,66 +1266,86 @@ function computerMove() {
         const distAfter = Math.abs(m.toRow - 3.5) + Math.abs(m.toCol - 3.5);
         return distAfter < distBefore;
       });
-      moveToMake = centerMoves.length ? centerMoves[Math.floor(Math.random() * centerMoves.length)] : allMoves[Math.floor(Math.random() * allMoves.length)];
+      moveToMake = centerMoves.length
+        ? centerMoves[Math.floor(Math.random() * centerMoves.length)]
+        : allMoves[Math.floor(Math.random() * allMoves.length)];
     }
   }
 
   if (moveToMake) {
-    makeMove(moveToMake.fromRow, moveToMake.fromCol, moveToMake.toRow, moveToMake.toCol);
+    // Сделать ход и дождаться завершения (анимации, обработки)
+    await new Promise(resolve => {
+      function onMoveComplete() {
+        document.removeEventListener('moveComplete', onMoveComplete);
+        resolve();
+      }
+      document.addEventListener('moveComplete', onMoveComplete);
+      makeMove(moveToMake.fromRow, moveToMake.fromCol, moveToMake.toRow, moveToMake.toCol);
+    });
+
+    // После хода проверить, есть ли продолжение цепочки взятий
+    if (gameState.captureChain) {
+      // Если есть, продолжить рубить
+      await computerMove();
+    } else {
+      // Ход окончен, переключаем ход на белых
+      gameState.currentPlayer = 'white';
+      updateStatus();
+      gameState.moveInProgress = false;
+    }
   } else {
     alert('Победили белые! Компьютер не может ходить.');
     showScreen('menu');
   }
 }
 
+
+// --- Продолжение цепочки рубки компьютера ---
 // --- Продолжение цепочки рубки компьютера ---
 function computerContinueCapture() {
     if (!gameState.captureChain) return;
 
     const { row, col } = gameState.captureChain;
     const piece = gameState.board[row][col];
-    if (!piece) {
-        endComputerTurn();
-        return;
-    }
+    if (!piece) return;
 
-    // Находим все возможные продолжения взятия
     const { captures } = findMovesAndCaptures(row, col);
-    
     if (captures.length === 0) {
         endComputerTurn();
         return;
     }
 
     // Выбираем взятие с максимальным количеством последующих взятий
-    let bestCapture = captures[0];
-    let maxAdditionalCaptures = 0;
+    let bestCapture = null;
+    let maxAdditionalCaptures = -1;
 
     for (const capture of captures) {
-        // Временная симуляция хода
-        const tempBoard = JSON.parse(JSON.stringify(gameState.board));
-        tempBoard[capture.toRow][capture.toCol] = tempBoard[row][col];
-        tempBoard[row][col] = null;
+        // Временное состояние для симуляции
+        const tempState = JSON.parse(JSON.stringify(gameState));
         
-        // Удаляем сбитую шашку (для дамки - особый случай)
+        // Симулируем ход
+        tempState.board[capture.toRow][capture.toCol] = tempState.board[row][col];
+        tempState.board[row][col] = null;
+        
+        // Удаляем сбитую шашку
         if (piece.king) {
             const dirR = Math.sign(capture.toRow - row);
             const dirC = Math.sign(capture.toCol - col);
-            for (let dist = 1; dist < Math.max(Math.abs(capture.toRow - row), Math.abs(capture.toCol - col)); dist++) {
-                const r = row + dist * dirR;
-                const c = col + dist * dirC;
-                if (tempBoard[r][c] && tempBoard[r][c].type !== piece.type) {
-                    tempBoard[r][c] = null;
+            for (let d = 1; d < Math.max(Math.abs(capture.toRow-row), Math.abs(capture.toCol-col)); d++) {
+                const r = row + d * dirR;
+                const c = col + d * dirC;
+                if (tempState.board[r][c] && tempState.board[r][c].type !== piece.type) {
+                    tempState.board[r][c] = null;
                     break;
                 }
             }
         } else {
             const midRow = (row + capture.toRow) >> 1;
             const midCol = (col + capture.toCol) >> 1;
-            tempBoard[midRow][midCol] = null;
+            tempState.board[midRow][midCol] = null;
         }
 
-        // Проверяем возможные продолжения
+        // Проверяем продолжения
         const additionalCaptures = findMovesAndCaptures(capture.toRow, capture.toCol).captures.length;
         
         if (additionalCaptures > maxAdditionalCaptures) {
@@ -964,19 +1354,42 @@ function computerContinueCapture() {
         }
     }
 
-    makeMove(bestCapture.fromRow, bestCapture.fromCol, bestCapture.toRow, bestCapture.toCol);
+    if (bestCapture) {
+        makeMove(bestCapture.fromRow, bestCapture.fromCol, 
+                bestCapture.toRow, bestCapture.toCol);
+    } else {
+        endComputerTurn();
+    }
 }
 
 function canContinueCapture(row, col) {
-    const piece = gameState.board[row][col];
-    if (!piece) return false;
-    return piece.king ? canKingContinueCapture(row, col) : canCapture(row, col);
-}
+    const piece = gameState.board[row]?.[col];
+    if (!piece || piece.king) return false;
 
-function endComputerTurn() {
-  gameState.captureChain = null;
-  gameState.currentPlayer = 'white';
-  updateStatus();
+    console.log(`Проверка продолжения взятия для обычной шашки на [${row},${col}]`);
+
+    const directions = [
+        { r: -2, c: -2 }, { r: -2, c: 2 },
+        { r: 2, c: -2 }, { r: 2, c: 2 }
+    ];
+
+    for (const { r: dr, c: dc } of directions) {
+        const toRow = row + dr;
+        const toCol = col + dc;
+        const midRow = row + dr/2;
+        const midCol = col + dc/2;
+
+        if (inBounds(toRow, toCol) && inBounds(midRow, midCol)) {
+            const midPiece = gameState.board[midRow][midCol];
+            const toPiece = gameState.board[toRow][toCol];
+            
+            if (midPiece && midPiece.type !== piece.type && !toPiece) {
+                console.log(`Можно рубить через [${midRow},${midCol}] на [${toRow},${toCol}]`);
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 // --- Обновление статуса игры ---
